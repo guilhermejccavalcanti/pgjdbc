@@ -11,7 +11,6 @@ import java.io.IOException;
 import java.io.PrintWriter;
 import java.sql.*;
 import java.util.*;
-
 import org.postgresql.core.*;
 import org.postgresql.Driver;
 import org.postgresql.PGNotification;
@@ -27,8 +26,8 @@ import org.postgresql.util.SharedTimer;
  * This class defines methods of the jdbc2 specification.
  * The real Connection class (for jdbc2) is org.postgresql.jdbc2.Jdbc2Connection
  */
-public abstract class AbstractJdbc2Connection implements BaseConnection
-{
+public abstract class AbstractJdbc2Connection implements BaseConnection {
+
     //
     // Driver-wide connection ID counter, used for logging
     //
@@ -37,7 +36,6 @@ public abstract class AbstractJdbc2Connection implements BaseConnection
     //
     // Data initialized on construction:
     //
-
     // Per-connection logger
     private final Logger logger;
 
@@ -48,16 +46,18 @@ public abstract class AbstractJdbc2Connection implements BaseConnection
 
     /* Actual network handler */
     private final ProtocolConnection protoConnection;
+
     /* Compatible version as xxyyzz form */
     private final int compatibleInt;
 
     /* Query that runs COMMIT */
     private final Query commitQuery;
+
     /* Query that runs ROLLBACK */
     private final Query rollbackQuery;
 
     private TypeInfo _typeCache;
-    
+
     private boolean disableColumnSanitiser = false;
 
     // Default statement prepare threshold.
@@ -74,6 +74,7 @@ public abstract class AbstractJdbc2Connection implements BaseConnection
 
     // Connection's autocommit state.
     private boolean autoCommit = true;
+
     // Connection's readonly state.
     private boolean readOnly = false;
 
@@ -85,6 +86,7 @@ public abstract class AbstractJdbc2Connection implements BaseConnection
 
     /** Set of oids that use binary transfer when sending to server. */
     private Set<Integer> useBinarySendForOids;
+
     /** Set of oids that use binary transfer when receiving from server. */
     private Set<Integer> useBinaryReceiveForOids;
 
@@ -94,56 +96,46 @@ public abstract class AbstractJdbc2Connection implements BaseConnection
     // Only instantiated if a task is actually scheduled.
     private volatile Timer cancelTimer = null;
 
-    //
-    // Ctor.
-    //
-    protected AbstractJdbc2Connection(HostSpec[] hostSpecs, String user, String database, Properties info, String url) throws SQLException
-    {
-        this.creatingURL = url;
+    /**
+     * True if cleanup-in-finalizer is required for the statements of this connection.
+     */
+    private boolean autoCloseUnclosedStatements;
 
+    //
+    protected AbstractJdbc2Connection(HostSpec[] hostSpecs, String user, String database, Properties info, String url) throws SQLException {
+        this.creatingURL = url;
         // Read loglevel arg and set the loglevel based on this value;
         // In addition to setting the log level, enable output to
         // standard out if no other printwriter is set
-
         int logLevel = Driver.getLogLevel();
         Integer connectionLogLevel = PGProperty.LOG_LEVEL.getInteger(info);
         if (connectionLogLevel != null) {
             logLevel = connectionLogLevel;
         }
-
         synchronized (AbstractJdbc2Connection.class) {
             logger = new Logger(nextConnectionID++);
             logger.setLogLevel(logLevel);
         }
-
         if (logLevel > 0)
             enableDriverManagerLogging();
-
         setDefaultFetchSize(PGProperty.DEFAULT_ROW_FETCH_SIZE.getInt(info));
-
         prepareThreshold = PGProperty.PREPARE_THRESHOLD.getInt(info);
         if (prepareThreshold == -1)
             forcebinary = true;
-        
         boolean binaryTransfer = PGProperty.BINARY_TRANSFER.getBoolean(info);
-
         //Print out the driver version number
         if (logger.logInfo())
             logger.info(Driver.getVersion());
-
         // Now make the initial connection and set up local state
         this.protoConnection = ConnectionFactory.openConnection(hostSpecs, user, database, info, logger);
         int compat = Utils.parseServerVersionStr(PGProperty.COMPATIBLE.get(info));
         if (compat == 0)
             compat = Driver.MAJORVERSION * 10000 + Driver.MINORVERSION * 100;
         this.compatibleInt = compat;
-
         // Set read-only early if requested
-        if (PGProperty.READ_ONLY.getBoolean(info))
-        {
+        if (PGProperty.READ_ONLY.getBoolean(info)) {
             setReadOnly(true);
         }
-
         // Formats that currently have binary protocol support
         Set<Integer> binaryOids = new HashSet<Integer>();
         if (binaryTransfer && protoConnection.getProtocolVersion() >= 3) {
@@ -169,8 +161,7 @@ public abstract class AbstractJdbc2Connection implements BaseConnection
             binaryOids.add(Oid.POINT);
             binaryOids.add(Oid.BOX);
             binaryOids.add(Oid.UUID);
-        }        
-        // the pre 8.0 servers do not disclose their internal encoding for
+        }
         // time fields so do not try to use them.
         if (!haveMinimumCompatibleVersion("8.0")) {
             binaryOids.remove(Oid.TIME);
@@ -189,27 +180,21 @@ public abstract class AbstractJdbc2Connection implements BaseConnection
             binaryOids.remove(Oid.VARCHAR_ARRAY);
             binaryOids.remove(Oid.TEXT_ARRAY);
         }
-
         binaryOids.addAll(getOidSet(PGProperty.BINARY_TRANSFER_ENABLE.get(info)));
         binaryOids.removeAll(getOidSet(PGProperty.BINARY_TRANSFER_DISABLE.get(info)));
-
         // split for receive and send for better control
         useBinarySendForOids = new HashSet<Integer>();
         useBinarySendForOids.addAll(binaryOids);
         useBinaryReceiveForOids = new HashSet<Integer>();
         useBinaryReceiveForOids.addAll(binaryOids);
-
         /*
          * Does not pass unit tests because unit tests expect setDate to have
          * millisecond accuracy whereas the binary transfer only supports
          * date accuracy.
          */
         useBinarySendForOids.remove(Oid.DATE);
-
         protoConnection.setBinaryReceiveOids(useBinaryReceiveForOids);
-
-        if (logger.logDebug())
-        {
+        if (logger.logDebug()) {
             logger.debug("    compatible = " + compatibleInt);
             logger.debug("    loglevel = " + logLevel);
             logger.debug("    prepare threshold = " + prepareThreshold);
@@ -217,11 +202,9 @@ public abstract class AbstractJdbc2Connection implements BaseConnection
             logger.debug("    types using binary receive = " + oidsToString(useBinaryReceiveForOids));
             logger.debug("    integer date/time = " + protoConnection.getIntegerDateTimes());
         }
-
         //
         // String -> text or unknown?
         //
-
         String stringType = PGProperty.STRING_TYPE.get(info);
         if (stringType != null) {
             if (stringType.equalsIgnoreCase("unspecified"))
@@ -229,31 +212,25 @@ public abstract class AbstractJdbc2Connection implements BaseConnection
             else if (stringType.equalsIgnoreCase("varchar"))
                 bindStringAsVarchar = true;
             else
-                throw new PSQLException(GT.tr("Unsupported value for stringtype parameter: {0}", stringType),
-                                        PSQLState.INVALID_PARAMETER_VALUE);
+                throw new PSQLException(GT.tr("Unsupported value for stringtype parameter: {0}", stringType), PSQLState.INVALID_PARAMETER_VALUE);
         } else {
             bindStringAsVarchar = haveMinimumCompatibleVersion("8.0");
         }
-
         // Initialize timestamp stuff
-        timestampUtils = new TimestampUtils(haveMinimumServerVersion("7.4"), haveMinimumServerVersion("8.2"),
-                                            !protoConnection.getIntegerDateTimes());
-
+        timestampUtils = new TimestampUtils(haveMinimumServerVersion("7.4"), haveMinimumServerVersion("8.2"), !protoConnection.getIntegerDateTimes());
         // Initialize common queries.
         commitQuery = getQueryExecutor().createSimpleQuery("COMMIT");
         rollbackQuery = getQueryExecutor().createSimpleQuery("ROLLBACK");
-
         int unknownLength = PGProperty.UNKNOWN_LENGTH.getInt(info);
-
         // Initialize object handling
         _typeCache = createTypeInfo(this, unknownLength);
         initObjectTypes(info);
-
         if (PGProperty.LOG_UNCLOSED_CONNECTIONS.getBoolean(info)) {
             openStackTrace = new Throwable("Connection was created at this point:");
             enableDriverManagerLogging();
         }
         this.disableColumnSanitiser = PGProperty.DISABLE_COLUMN_SANITISER.getBoolean(info);
+        this.autoCloseUnclosedStatements = PGProperty.AUTO_CLOSE_UNCLOSED_STATEMENTS.getBoolean(info);
     }
 
     private Set<Integer> getOidSet(String oidList) throws PSQLException {
@@ -281,37 +258,36 @@ public abstract class AbstractJdbc2Connection implements BaseConnection
     }
 
     private final TimestampUtils timestampUtils;
-    public TimestampUtils getTimestampUtils() { return timestampUtils; }
+
+    public TimestampUtils getTimestampUtils() {
+        return timestampUtils;
+    }
 
     /*
      * The current type mappings
      */
     protected java.util.Map typemap;
 
-    public java.sql.Statement createStatement() throws SQLException
-    {
+    public java.sql.Statement createStatement() throws SQLException {
         // We now follow the spec and default to TYPE_FORWARD_ONLY.
         return createStatement(java.sql.ResultSet.TYPE_FORWARD_ONLY, java.sql.ResultSet.CONCUR_READ_ONLY);
     }
 
     public abstract java.sql.Statement createStatement(int resultSetType, int resultSetConcurrency) throws SQLException;
 
-    public java.sql.PreparedStatement prepareStatement(String sql) throws SQLException
-    {
+    public java.sql.PreparedStatement prepareStatement(String sql) throws SQLException {
         return prepareStatement(sql, java.sql.ResultSet.TYPE_FORWARD_ONLY, java.sql.ResultSet.CONCUR_READ_ONLY);
     }
 
     public abstract java.sql.PreparedStatement prepareStatement(String sql, int resultSetType, int resultSetConcurrency) throws SQLException;
 
-    public java.sql.CallableStatement prepareCall(String sql) throws SQLException
-    {
+    public java.sql.CallableStatement prepareCall(String sql) throws SQLException {
         return prepareCall(sql, java.sql.ResultSet.TYPE_FORWARD_ONLY, java.sql.ResultSet.CONCUR_READ_ONLY);
     }
 
     public abstract java.sql.CallableStatement prepareCall(String sql, int resultSetType, int resultSetConcurrency) throws SQLException;
 
-    public java.util.Map getTypeMap() throws SQLException
-    {
+    public java.util.Map getTypeMap() throws SQLException {
         checkClosed();
         return typemap;
     }
@@ -325,14 +301,12 @@ public abstract class AbstractJdbc2Connection implements BaseConnection
      * This adds a warning to the warning chain.
      * @param warn warning to add
      */
-    public void addWarning(SQLWarning warn)
-    {
+    public void addWarning(SQLWarning warn) {
         // Add the warning to the chain
         if (firstWarning != null)
             firstWarning.setNextWarning(warn);
         else
             firstWarning = warn;
-
     }
 
     public ResultSet execSQLQuery(String s) throws SQLException {
@@ -345,34 +319,26 @@ public abstract class AbstractJdbc2Connection implements BaseConnection
     public ResultSet execSQLQuery(String s, int resultSetType, int resultSetConcurrency) throws SQLException {
         BaseStatement stat = (BaseStatement) createStatement(resultSetType, resultSetConcurrency);
         boolean hasResultSet = stat.executeWithFlags(s, QueryExecutor.QUERY_SUPPRESS_BEGIN);
-
-        while (!hasResultSet && stat.getUpdateCount() != -1)
-            hasResultSet = stat.getMoreResults();
-
+        while (!hasResultSet && stat.getUpdateCount() != -1) hasResultSet = stat.getMoreResults();
         if (!hasResultSet)
             throw new PSQLException(GT.tr("No results were returned by the query."), PSQLState.NO_DATA);
-
         // Transfer warnings to the connection, since the user never
         // has a chance to see the statement itself.
         SQLWarning warnings = stat.getWarnings();
         if (warnings != null)
             addWarning(warnings);
-
         return stat.getResultSet();
     }
 
     public void execSQLUpdate(String s) throws SQLException {
         BaseStatement stmt = (BaseStatement) createStatement();
         if (stmt.executeWithFlags(s, QueryExecutor.QUERY_NO_METADATA | QueryExecutor.QUERY_NO_RESULTS | QueryExecutor.QUERY_SUPPRESS_BEGIN))
-            throw new PSQLException(GT.tr("A result was returned when none was expected."),
-                                    PSQLState.TOO_MANY_RESULTS);
-
+            throw new PSQLException(GT.tr("A result was returned when none was expected."), PSQLState.TOO_MANY_RESULTS);
         // Transfer warnings to the connection, since the user never
         // has a chance to see the statement itself.
         SQLWarning warnings = stmt.getWarnings();
         if (warnings != null)
             addWarning(warnings);
-
         stmt.close();
     }
 
@@ -387,10 +353,9 @@ public abstract class AbstractJdbc2Connection implements BaseConnection
      * @param cursor the cursor name
      * @exception SQLException if a database access error occurs
      */
-    public void setCursorName(String cursor) throws SQLException
-    {
+    public void setCursorName(String cursor) throws SQLException {
         checkClosed();
-        // No-op.
+    // No-op.
     }
 
     /*
@@ -399,8 +364,7 @@ public abstract class AbstractJdbc2Connection implements BaseConnection
      * @return the current cursor name
      * @exception SQLException if a database access error occurs
      */
-    public String getCursorName() throws SQLException
-    {
+    public String getCursorName() throws SQLException {
         checkClosed();
         return null;
     }
@@ -414,8 +378,7 @@ public abstract class AbstractJdbc2Connection implements BaseConnection
      * @return the url
      * @exception SQLException just in case...
      */
-    public String getURL() throws SQLException
-    {
+    public String getURL() throws SQLException {
         return creatingURL;
     }
 
@@ -426,8 +389,7 @@ public abstract class AbstractJdbc2Connection implements BaseConnection
      * @return the user name
      * @exception SQLException just in case...
      */
-    public String getUserName() throws SQLException
-    {
+    public String getUserName() throws SQLException {
         return protoConnection.getUser();
     }
 
@@ -453,8 +415,7 @@ public abstract class AbstractJdbc2Connection implements BaseConnection
      * backend.
      * @exception SQLException by Fastpath when initialising for first time
      */
-    public Fastpath getFastpathAPI() throws SQLException
-    {
+    public Fastpath getFastpathAPI() throws SQLException {
         checkClosed();
         if (fastpath == null)
             fastpath = new Fastpath(this);
@@ -483,8 +444,7 @@ public abstract class AbstractJdbc2Connection implements BaseConnection
      * @return LargeObject object that implements the API
      * @exception SQLException by LargeObject when initialising for first time
      */
-    public LargeObjectManager getLargeObjectAPI() throws SQLException
-    {
+    public LargeObjectManager getLargeObjectAPI() throws SQLException {
         checkClosed();
         if (largeobject == null)
             largeobject = new LargeObjectManager(this);
@@ -508,35 +468,20 @@ public abstract class AbstractJdbc2Connection implements BaseConnection
      * @return PGobject for this type, and set to value
      * @exception SQLException if value is not correct for this type
      */
-    public Object getObject(String type, String value, byte[] byteValue) throws SQLException
-    {
-        if (typemap != null)
-        {
+    public Object getObject(String type, String value, byte[] byteValue) throws SQLException {
+        if (typemap != null) {
             Class c = (Class) typemap.get(type);
-            if (c != null)
-            {
+            if (c != null) {
                 // Handle the type (requires SQLInput & SQLOutput classes to be implemented)
                 throw new PSQLException(GT.tr("Custom type maps are not supported."), PSQLState.NOT_IMPLEMENTED);
             }
         }
-
         PGobject obj = null;
-
         if (logger.logDebug())
             logger.debug("Constructing object from type=" + type + " value=<" + value + ">");
-
-        try
-        {
+        try {
             Class klass = _typeCache.getPGobject(type);
-
-            // If className is not null, then try to instantiate it,
-            // It must be basetype PGobject
-
-            // This is used to implement the org.postgresql unique types (like lseg,
-            // point, etc).
-
-            if (klass != null)
-            {
+            if (klass != null) {
                 obj = (PGobject) (klass.newInstance());
                 obj.setType(type);
                 if (byteValue != null && obj instanceof PGBinaryObject) {
@@ -545,60 +490,44 @@ public abstract class AbstractJdbc2Connection implements BaseConnection
                 } else {
                     obj.setValue(value);
                 }
-            }
-            else
-            {
+            } else {
                 // If className is null, then the type is unknown.
                 // so return a PGobject with the type set, and the value set
                 obj = new PGobject();
-                obj.setType( type );
-                obj.setValue( value );
+                obj.setType(type);
+                obj.setValue(value);
             }
-
             return obj;
-        }
-        catch (SQLException sx)
-        {
-            // rethrow the exception. Done because we capture any others next
+        } catch (SQLException sx) {
             throw sx;
-        }
-        catch (Exception ex)
-        {
+        } catch (Exception ex) {
             throw new PSQLException(GT.tr("Failed to create object for: {0}.", type), PSQLState.CONNECTION_FAILURE, ex);
         }
     }
 
-    protected TypeInfo createTypeInfo(BaseConnection conn, int unknownLength)
-    {
+    protected TypeInfo createTypeInfo(BaseConnection conn, int unknownLength) {
         return new TypeInfoCache(conn, unknownLength);
     }
 
-    public TypeInfo getTypeInfo()
-    {
+    public TypeInfo getTypeInfo() {
         return _typeCache;
     }
 
-    public void addDataType(String type, String name)
-    {
-        try
-        {
+    public void addDataType(String type, String name) {
+        try {
             addDataType(type, Class.forName(name));
-        }
-        catch (Exception e)
-        {
+        } catch (Exception e) {
             throw new RuntimeException("Cannot register new type: " + e);
         }
     }
 
-    public void addDataType(String type, Class klass) throws SQLException
-    {
+    public void addDataType(String type, Class klass) throws SQLException {
         checkClosed();
         _typeCache.addDataType(type, klass);
     }
 
     // This initialises the objectTypes hash map
-    private void initObjectTypes(Properties info) throws SQLException
-    {
+    private void initObjectTypes(Properties info) throws SQLException {
         // Add in the types that come packaged with the driver.
         // These can be overridden later if desired.
         addDataType("box", org.postgresql.geometric.PGbox.class);
@@ -610,26 +539,17 @@ public abstract class AbstractJdbc2Connection implements BaseConnection
         addDataType("polygon", org.postgresql.geometric.PGpolygon.class);
         addDataType("money", org.postgresql.util.PGmoney.class);
         addDataType("interval", org.postgresql.util.PGInterval.class);
-
-        for (Enumeration e = info.propertyNames(); e.hasMoreElements(); )
-        {
-            String propertyName = (String)e.nextElement();
-            if (propertyName.startsWith("datatype."))
-            {
+        for (Enumeration e = info.propertyNames(); e.hasMoreElements(); ) {
+            String propertyName = (String) e.nextElement();
+            if (propertyName.startsWith("datatype.")) {
                 String typeName = propertyName.substring(9);
                 String className = info.getProperty(propertyName);
                 Class klass;
-
-                try
-                {
+                try {
                     klass = Class.forName(className);
+                } catch (ClassNotFoundException cnfe) {
+                    throw new PSQLException(GT.tr("Unable to load the class {0} responsible for the datatype {1}", new Object[] { className, typeName }), PSQLState.SYSTEM_ERROR, cnfe);
                 }
-                catch (ClassNotFoundException cnfe)
-                {
-                    throw new PSQLException(GT.tr("Unable to load the class {0} responsible for the datatype {1}", new Object[] { className, typeName }),
-                                            PSQLState.SYSTEM_ERROR, cnfe);
-                }
-
                 addDataType(typeName, klass);
             }
         }
@@ -646,8 +566,7 @@ public abstract class AbstractJdbc2Connection implements BaseConnection
      *
      * @exception SQLException if a database access error occurs
      */
-    public void close()
-    {
+    public void close() {
         releaseTimer();
         protoConnection.close();
         openStackTrace = null;
@@ -663,11 +582,10 @@ public abstract class AbstractJdbc2Connection implements BaseConnection
      * @return the native form of this statement
      * @exception SQLException if a database access error occurs
      */
-    public String nativeSQL(String sql) throws SQLException
-    {
+    public String nativeSQL(String sql) throws SQLException {
         checkClosed();
         StringBuilder buf = new StringBuilder(sql.length());
-        AbstractJdbc2Statement.parseSql(sql,0,buf,false,getStandardConformingStrings());
+        AbstractJdbc2Statement.parseSql(sql, 0, buf, false, getStandardConformingStrings());
         return buf.toString();
     }
 
@@ -681,16 +599,15 @@ public abstract class AbstractJdbc2Connection implements BaseConnection
      * @return the first SQLWarning or null
      * @exception SQLException if a database access error occurs
      */
-    public synchronized SQLWarning getWarnings()
-    throws SQLException
-    {
+    public synchronized SQLWarning getWarnings() throws SQLException {
         checkClosed();
-        SQLWarning newWarnings = protoConnection.getWarnings(); // NB: also clears them.
+        // NB: also clears them.
+        SQLWarning newWarnings = protoConnection.getWarnings();
         if (firstWarning == null)
             firstWarning = newWarnings;
         else
-            firstWarning.setNextWarning(newWarnings); // Chain them on.
-
+            // Chain them on.
+            firstWarning.setNextWarning(newWarnings);
         return firstWarning;
     }
 
@@ -700,14 +617,12 @@ public abstract class AbstractJdbc2Connection implements BaseConnection
      *
      * @exception SQLException if a database access error occurs
      */
-    public synchronized void clearWarnings()
-    throws SQLException
-    {
+    public synchronized void clearWarnings() throws SQLException {
         checkClosed();
-        protoConnection.getWarnings(); // Clear and discard.
+        // Clear and discard.
+        protoConnection.getWarnings();
         firstWarning = null;
     }
-
 
     /*
      * You can put a connection in read-only mode as a hunt to enable
@@ -719,19 +634,15 @@ public abstract class AbstractJdbc2Connection implements BaseConnection
      * @param readOnly - true enables read-only mode; false disables it
      * @exception SQLException if a database access error occurs
      */
-    public void setReadOnly(boolean readOnly) throws SQLException
-    {
+    public void setReadOnly(boolean readOnly) throws SQLException {
         checkClosed();
         if (protoConnection.getTransactionState() != ProtocolConnection.TRANSACTION_IDLE)
-            throw new PSQLException(GT.tr("Cannot change transaction read-only property in the middle of a transaction."),
-                                    PSQLState.ACTIVE_SQL_TRANSACTION);
-
-        if (haveMinimumServerVersion("7.4") && readOnly != this.readOnly)
-        {
+            throw new PSQLException(GT.tr("Cannot change transaction read-only property in the middle of a transaction."), PSQLState.ACTIVE_SQL_TRANSACTION);
+        if (haveMinimumServerVersion("7.4") && readOnly != this.readOnly) {
             String readOnlySql = "SET SESSION CHARACTERISTICS AS TRANSACTION " + (readOnly ? "READ ONLY" : "READ WRITE");
-            execSQLUpdate(readOnlySql); // nb: no BEGIN triggered.
+            // nb: no BEGIN triggered.
+            execSQLUpdate(readOnlySql);
         }
-
         this.readOnly = readOnly;
     }
 
@@ -741,8 +652,7 @@ public abstract class AbstractJdbc2Connection implements BaseConnection
      * @return true if the connection is read only
      * @exception SQLException if a database access error occurs
      */
-    public boolean isReadOnly() throws SQLException
-    {
+    public boolean isReadOnly() throws SQLException {
         checkClosed();
         return readOnly;
     }
@@ -765,16 +675,12 @@ public abstract class AbstractJdbc2Connection implements BaseConnection
      * @param autoCommit - true enables auto-commit; false disables it
      * @exception SQLException if a database access error occurs
      */
-    public void setAutoCommit(boolean autoCommit) throws SQLException
-    {
+    public void setAutoCommit(boolean autoCommit) throws SQLException {
         checkClosed();
-
         if (this.autoCommit == autoCommit)
-            return ;
-
+            return;
         if (!this.autoCommit)
             commit();
-
         this.autoCommit = autoCommit;
     }
 
@@ -784,8 +690,7 @@ public abstract class AbstractJdbc2Connection implements BaseConnection
      * @return Current state of the auto-commit mode
      * @see setAutoCommit
      */
-    public boolean getAutoCommit() throws SQLException
-    {
+    public boolean getAutoCommit() throws SQLException {
         checkClosed();
         return this.autoCommit;
     }
@@ -793,11 +698,9 @@ public abstract class AbstractJdbc2Connection implements BaseConnection
     private void executeTransactionCommand(Query query) throws SQLException {
         int flags = QueryExecutor.QUERY_NO_METADATA | QueryExecutor.QUERY_NO_RESULTS | QueryExecutor.QUERY_SUPPRESS_BEGIN;
         if (prepareThreshold == 0) {
-          flags |= QueryExecutor.QUERY_ONESHOT;
+            flags |= QueryExecutor.QUERY_ONESHOT;
         }
-
-        getQueryExecutor().execute(query, null, new TransactionCommandHandler(),
-                                   0, 0, flags);
+        getQueryExecutor().execute(query, null, new TransactionCommandHandler(), 0, 0, flags);
     }
 
     /*
@@ -811,24 +714,18 @@ public abstract class AbstractJdbc2Connection implements BaseConnection
      *                         this Connection object is in auto-commit mode
      * @see setAutoCommit
      */
-    public void commit() throws SQLException
-    {
+    public void commit() throws SQLException {
         checkClosed();
-
         if (autoCommit)
-            throw new PSQLException(GT.tr("Cannot commit when autoCommit is enabled."),
-                                    PSQLState.NO_ACTIVE_SQL_TRANSACTION);
-
+            throw new PSQLException(GT.tr("Cannot commit when autoCommit is enabled."), PSQLState.NO_ACTIVE_SQL_TRANSACTION);
         if (protoConnection.getTransactionState() != ProtocolConnection.TRANSACTION_IDLE)
             executeTransactionCommand(commitQuery);
     }
 
     protected void checkClosed() throws SQLException {
         if (isClosed())
-            throw new PSQLException(GT.tr("This connection has been closed."),
-                                    PSQLState.CONNECTION_DOES_NOT_EXIST);
+            throw new PSQLException(GT.tr("This connection has been closed."), PSQLState.CONNECTION_DOES_NOT_EXIST);
     }
- 
 
     /*
      * The method rollback() drops all changes made since the previous
@@ -840,14 +737,10 @@ public abstract class AbstractJdbc2Connection implements BaseConnection
      *                         this Connection object is in auto-commit mode
      * @see commit
      */
-    public void rollback() throws SQLException
-    {
+    public void rollback() throws SQLException {
         checkClosed();
-
         if (autoCommit)
-            throw new PSQLException(GT.tr("Cannot rollback when autoCommit is enabled."),
-                                    PSQLState.NO_ACTIVE_SQL_TRANSACTION);
-
+            throw new PSQLException(GT.tr("Cannot rollback when autoCommit is enabled."), PSQLState.NO_ACTIVE_SQL_TRANSACTION);
         if (protoConnection.getTransactionState() != ProtocolConnection.TRANSACTION_IDLE)
             executeTransactionCommand(rollbackQuery);
     }
@@ -862,45 +755,37 @@ public abstract class AbstractJdbc2Connection implements BaseConnection
      * @return the current TRANSACTION_* mode value
      * @exception SQLException if a database access error occurs
      */
-    public int getTransactionIsolation() throws SQLException
-    {
+    public int getTransactionIsolation() throws SQLException {
         checkClosed();
-
         String level = null;
-
-        if (haveMinimumServerVersion("7.3"))
-        {
+        if (haveMinimumServerVersion("7.3")) {
             // 7.3+ returns the level as a query result.
-            ResultSet rs = execSQLQuery("SHOW TRANSACTION ISOLATION LEVEL"); // nb: no BEGIN triggered
+            // nb: no BEGIN triggered
+            ResultSet rs = execSQLQuery("SHOW TRANSACTION ISOLATION LEVEL");
             if (rs.next())
                 level = rs.getString(1);
             rs.close();
-        }
-        else
-        {
+        } else {
             // 7.2 returns the level as an INFO message. Ew.
             // We juggle the warning chains a bit here.
-
             // Swap out current warnings.
             SQLWarning saveWarnings = getWarnings();
             clearWarnings();
-
             // Run the query any examine any resulting warnings.
-            execSQLUpdate("SHOW TRANSACTION ISOLATION LEVEL"); // nb: no BEGIN triggered
+            // nb: no BEGIN triggered
+            execSQLUpdate("SHOW TRANSACTION ISOLATION LEVEL");
             SQLWarning warning = getWarnings();
             if (warning != null)
                 level = warning.getMessage();
-
             // Swap original warnings back.
             clearWarnings();
             if (saveWarnings != null)
                 addWarning(saveWarnings);
         }
-
         // XXX revisit: throw exception instead of silently eating the error in unkwon cases?
         if (level == null)
-            return Connection.TRANSACTION_READ_COMMITTED; // Best guess.
-
+            // Best guess.
+            return Connection.TRANSACTION_READ_COMMITTED;
         level = level.toUpperCase(Locale.US);
         if (level.contains("READ COMMITTED"))
             return Connection.TRANSACTION_READ_COMMITTED;
@@ -910,8 +795,8 @@ public abstract class AbstractJdbc2Connection implements BaseConnection
             return Connection.TRANSACTION_REPEATABLE_READ;
         if (level.contains("SERIALIZABLE"))
             return Connection.TRANSACTION_SERIALIZABLE;
-
-        return Connection.TRANSACTION_READ_COMMITTED; // Best guess.
+        // Best guess.
+        return Connection.TRANSACTION_READ_COMMITTED;
     }
 
     /*
@@ -927,43 +812,29 @@ public abstract class AbstractJdbc2Connection implements BaseConnection
      * @exception SQLException if a database access error occurs
      * @see java.sql.DatabaseMetaData#supportsTransactionIsolationLevel
      */
-    public void setTransactionIsolation(int level) throws SQLException
-    {
+    public void setTransactionIsolation(int level) throws SQLException {
         checkClosed();
-
         if (protoConnection.getTransactionState() != ProtocolConnection.TRANSACTION_IDLE)
-            throw new PSQLException(GT.tr("Cannot change transaction isolation level in the middle of a transaction."),
-                                    PSQLState.ACTIVE_SQL_TRANSACTION);
-
+            throw new PSQLException(GT.tr("Cannot change transaction isolation level in the middle of a transaction."), PSQLState.ACTIVE_SQL_TRANSACTION);
         String isolationLevelName = getIsolationLevelName(level);
         if (isolationLevelName == null)
             throw new PSQLException(GT.tr("Transaction isolation level {0} not supported.", level), PSQLState.NOT_IMPLEMENTED);
-
         String isolationLevelSQL = "SET SESSION CHARACTERISTICS AS TRANSACTION ISOLATION LEVEL " + isolationLevelName;
-        execSQLUpdate(isolationLevelSQL); // nb: no BEGIN triggered
+        // nb: no BEGIN triggered
+        execSQLUpdate(isolationLevelSQL);
     }
 
-    protected String getIsolationLevelName(int level)
-    {
+    protected String getIsolationLevelName(int level) {
         boolean pg80 = haveMinimumServerVersion("8.0");
-
-        if (level == Connection.TRANSACTION_READ_COMMITTED)
-        {
+        if (level == Connection.TRANSACTION_READ_COMMITTED) {
             return "READ COMMITTED";
-        }
-        else if (level == Connection.TRANSACTION_SERIALIZABLE)
-        {
+        } else if (level == Connection.TRANSACTION_SERIALIZABLE) {
             return "SERIALIZABLE";
-        }
-        else if (pg80 && level == Connection.TRANSACTION_READ_UNCOMMITTED)
-        {
+        } else if (pg80 && level == Connection.TRANSACTION_READ_UNCOMMITTED) {
             return "READ UNCOMMITTED";
-        }
-        else if (pg80 && level == Connection.TRANSACTION_REPEATABLE_READ)
-        {
+        } else if (pg80 && level == Connection.TRANSACTION_REPEATABLE_READ) {
             return "REPEATABLE READ";
         }
-
         return null;
     }
 
@@ -974,10 +845,9 @@ public abstract class AbstractJdbc2Connection implements BaseConnection
      *
      * @exception SQLException if a database access error occurs
      */
-    public void setCatalog(String catalog) throws SQLException
-    {
+    public void setCatalog(String catalog) throws SQLException {
         checkClosed();
-        //no-op
+    //no-op
     }
 
     /*
@@ -987,8 +857,7 @@ public abstract class AbstractJdbc2Connection implements BaseConnection
      * @return the current catalog name or null
      * @exception SQLException if a database access error occurs
      */
-    public String getCatalog() throws SQLException
-    {
+    public String getCatalog() throws SQLException {
         checkClosed();
         return protoConnection.getDatabase();
     }
@@ -1001,17 +870,12 @@ public abstract class AbstractJdbc2Connection implements BaseConnection
      * clients didn't close the connection, and once a fortnight enough
      * clients were open to kill the postgres server.
      */
-    protected void finalize() throws Throwable
-    {
-        try
-        {
+    protected void finalize() throws Throwable {
+        try {
             if (openStackTrace != null)
                 logger.log(GT.tr("Finalizing a Connection that was never closed:"), openStackTrace);
-                
             close();
-        }
-        finally 
-        {
+        } finally {
             super.finalize();
         }
     }
@@ -1019,40 +883,30 @@ public abstract class AbstractJdbc2Connection implements BaseConnection
     /*
      * Get server version number
      */
-    public String getDBVersionNumber()
-    {
+    public String getDBVersionNumber() {
         return protoConnection.getServerVersion();
     }
 
     // Parse a "dirty" integer surrounded by non-numeric characters
-    private static int integerPart(String dirtyString)
-    {
+    private static int integerPart(String dirtyString) {
         int start, end;
-
-        for (start = 0; start < dirtyString.length() && !Character.isDigit(dirtyString.charAt(start)); ++start)
-            ;
-
-        for (end = start; end < dirtyString.length() && Character.isDigit(dirtyString.charAt(end)); ++end)
-            ;
-
+        for (start = 0; start < dirtyString.length() && !Character.isDigit(dirtyString.charAt(start)); ++start) ;
+        for (end = start; end < dirtyString.length() && Character.isDigit(dirtyString.charAt(end)); ++end) ;
         if (start == end)
             return 0;
-
         return Integer.parseInt(dirtyString.substring(start, end));
     }
 
     /*
      * Get server major version
      */
-    public int getServerMajorVersion()
-    {
-        try
-        {
-            StringTokenizer versionTokens = new StringTokenizer(protoConnection.getServerVersion(), ".");  // aaXbb.ccYdd
-            return integerPart(versionTokens.nextToken()); // return X
-        }
-        catch (NoSuchElementException e)
-        {
+    public int getServerMajorVersion() {
+        try {
+            // aaXbb.ccYdd
+            StringTokenizer versionTokens = new StringTokenizer(protoConnection.getServerVersion(), ".");
+            // return X
+            return integerPart(versionTokens.nextToken());
+        } catch (NoSuchElementException e) {
             return 0;
         }
     }
@@ -1060,16 +914,15 @@ public abstract class AbstractJdbc2Connection implements BaseConnection
     /*
      * Get server minor version
      */
-    public int getServerMinorVersion()
-    {
-        try
-        {
-            StringTokenizer versionTokens = new StringTokenizer(protoConnection.getServerVersion(), ".");  // aaXbb.ccYdd
-            versionTokens.nextToken(); // Skip aaXbb
-            return integerPart(versionTokens.nextToken()); // return Y
-        }
-        catch (NoSuchElementException e)
-        {
+    public int getServerMinorVersion() {
+        try {
+            // aaXbb.ccYdd
+            StringTokenizer versionTokens = new StringTokenizer(protoConnection.getServerVersion(), ".");
+            // Skip aaXbb
+            versionTokens.nextToken();
+            // return Y
+            return integerPart(versionTokens.nextToken());
+        } catch (NoSuchElementException e) {
             return 0;
         }
     }
@@ -1077,8 +930,7 @@ public abstract class AbstractJdbc2Connection implements BaseConnection
     /**
      * Is the server we are connected to running at least this version?
      */
-    public boolean haveMinimumServerVersion(String ver)
-    {
+    public boolean haveMinimumServerVersion(String ver) {
         int requiredver = Utils.parseServerVersionStr(ver);
         if (requiredver == 0)
             /*
@@ -1090,8 +942,7 @@ public abstract class AbstractJdbc2Connection implements BaseConnection
             return haveMinimumServerVersion(requiredver);
     }
 
-    public boolean haveMinimumServerVersion(int ver)
-    {
+    public boolean haveMinimumServerVersion(int ver) {
         return protoConnection.getServerVersionNum() >= ver;
     }
 
@@ -1109,36 +960,29 @@ public abstract class AbstractJdbc2Connection implements BaseConnection
      *
      * Introduced in 9.4.
      */
-    public boolean haveMinimumCompatibleVersion(int ver)
-    {
+    public boolean haveMinimumCompatibleVersion(int ver) {
         return compatibleInt >= ver;
     }
 
     /* Prefer the int form */
-    public boolean haveMinimumCompatibleVersion(String ver)
-    {
+    public boolean haveMinimumCompatibleVersion(String ver) {
         return haveMinimumCompatibleVersion(Utils.parseServerVersionStr(ver));
     }
-
 
     public Encoding getEncoding() {
         return protoConnection.getEncoding();
     }
 
     public byte[] encodeString(String str) throws SQLException {
-        try
-        {
+        try {
             return getEncoding().encode(str);
-        }
-        catch (IOException ioe)
-        {
+        } catch (IOException ioe) {
             throw new PSQLException(GT.tr("Unable to translate data into the desired encoding."), PSQLState.DATA_ERROR, ioe);
         }
     }
 
     public String escapeString(String str) throws SQLException {
-        return Utils.escapeLiteral(null, str,
-                protoConnection.getStandardConformingStrings()).toString();
+        return Utils.escapeLiteral(null, str, protoConnection.getStandardConformingStrings()).toString();
     }
 
     public boolean getStandardConformingStrings() {
@@ -1154,19 +998,16 @@ public abstract class AbstractJdbc2Connection implements BaseConnection
      * @return the status of the connection
      * @exception SQLException (why?)
      */
-    public boolean isClosed() throws SQLException
-    {
+    public boolean isClosed() throws SQLException {
         return protoConnection.isClosed();
     }
 
-    public void cancelQuery() throws SQLException
-    {
+    public void cancelQuery() throws SQLException {
         checkClosed();
         protoConnection.sendQueryCancel();
     }
 
-    public PGNotification[] getNotifications() throws SQLException
-    {
+    public PGNotification[] getNotifications() throws SQLException {
         checkClosed();
         getQueryExecutor().processNotifies();
         // Backwards-compatibility hand-holding.
@@ -1175,13 +1016,13 @@ public abstract class AbstractJdbc2Connection implements BaseConnection
     }
 
     //
-    // Handler for transaction queries
-    //
     private class TransactionCommandHandler implements ResultHandler {
+
         private SQLException error;
 
         public void handleResultRows(Query fromQuery, Field[] fields, List tuples, ResultCursor cursor) {
         }
+
         public void handleCommandStatus(String status, int updateCount, long insertOID) {
         }
 
@@ -1208,9 +1049,7 @@ public abstract class AbstractJdbc2Connection implements BaseConnection
 
     public void setDefaultFetchSize(int fetchSize) throws SQLException {
         if (fetchSize < 0)
-            throw new PSQLException(GT.tr("Fetch size must be a value greater to or equal to 0."),
-                                    PSQLState.INVALID_PARAMETER_VALUE);
-
+            throw new PSQLException(GT.tr("Fetch size must be a value greater to or equal to 0."), PSQLState.INVALID_PARAMETER_VALUE);
         this.defaultFetchSize = fetchSize;
     }
 
@@ -1230,42 +1069,34 @@ public abstract class AbstractJdbc2Connection implements BaseConnection
         this.forcebinary = newValue;
     }
 
-
-    public void setTypeMapImpl(java.util.Map map) throws SQLException
-    {
+    public void setTypeMapImpl(java.util.Map map) throws SQLException {
         typemap = map;
     }
 
-    public Logger getLogger()
-    {
+    public Logger getLogger() {
         return logger;
     }
-
 
     //Because the get/setLogStream methods are deprecated in JDBC2
     //we use the get/setLogWriter methods here for JDBC2 by overriding
     //the base version of this method
-    protected void enableDriverManagerLogging()
-    {
-        if (DriverManager.getLogWriter() == null)
-        {
+    protected void enableDriverManagerLogging() {
+        if (DriverManager.getLogWriter() == null) {
             DriverManager.setLogWriter(new PrintWriter(System.out, true));
         }
     }
 
-    public int getProtocolVersion()
-    {
+    public int getProtocolVersion() {
         return protoConnection.getProtocolVersion();
     }
 
-    public boolean getStringVarcharFlag()
-    {
+    public boolean getStringVarcharFlag() {
         return bindStringAsVarchar;
     }
 
     private CopyManager copyManager = null;
-    public CopyManager getCopyAPI() throws SQLException
-    {
+
+    public CopyManager getCopyAPI() throws SQLException {
         checkClosed();
         if (copyManager == null)
             copyManager = new CopyManager(this);
@@ -1275,60 +1106,50 @@ public abstract class AbstractJdbc2Connection implements BaseConnection
     public boolean binaryTransferSend(int oid) {
         return useBinarySendForOids.contains(oid);
     }
-    
-    public int getBackendPID()
-    {
-    	return protoConnection.getBackendPID();
-    }
-    
-    public boolean isColumnSanitiserDisabled() {
-    	return this.disableColumnSanitiser;
+
+    public int getBackendPID() {
+        return protoConnection.getBackendPID();
     }
 
-    public void setDisableColumnSanitiser(boolean disableColumnSanitiser)
-    {
+    public boolean isColumnSanitiserDisabled() {
+        return this.disableColumnSanitiser;
+    }
+
+    public void setDisableColumnSanitiser(boolean disableColumnSanitiser) {
         this.disableColumnSanitiser = disableColumnSanitiser;
     }
 
-    public void setSchema(String schema) throws SQLException
-    {
+    public void setSchema(String schema) throws SQLException {
         checkClosed();
         Statement stmt = createStatement();
-        try
-        {
-            if (schema != null)
-            {
+        try {
+            if (schema != null) {
                 StringBuilder sb = new StringBuilder();
                 sb.append("SET SESSION search_path TO '");
                 Utils.escapeLiteral(sb, schema, protoConnection.getStandardConformingStrings());
                 sb.append("'");
                 stmt.executeUpdate(sb.toString());
-            }
-            else
-            {
+            } else {
                 stmt.executeUpdate("SET SESSION search_path TO DEFAULT");
             }
-        }
-        finally
-        {
+        } finally {
             stmt.close();
         }
     }
 
-    protected void abort()
-    {
-       protoConnection.abort();
+    protected void abort() {
+        protoConnection.abort();
     }
 
     private synchronized Timer getTimer() {
-        if( cancelTimer == null ) {
+        if (cancelTimer == null) {
             cancelTimer = Driver.getSharedTimer().getTimer();
         }
         return cancelTimer;
     }
 
     private synchronized void releaseTimer() {
-        if( cancelTimer != null ) {
+        if (cancelTimer != null) {
             cancelTimer = null;
             Driver.getSharedTimer().releaseTimer();
         }
@@ -1336,12 +1157,12 @@ public abstract class AbstractJdbc2Connection implements BaseConnection
 
     public void addTimerTask(TimerTask timerTask, long milliSeconds) {
         Timer timer = getTimer();
-        timer.schedule( timerTask, milliSeconds );
+        timer.schedule(timerTask, milliSeconds);
     }
 
     public void purgeTimerTasks() {
         Timer timer = cancelTimer;
-        if( timer != null ) {
+        if (timer != null) {
             timer.purge();
         }
     }
@@ -1352,5 +1173,13 @@ public abstract class AbstractJdbc2Connection implements BaseConnection
 
     public String escapeLiteral(String literal) throws SQLException {
         return Utils.escapeLiteral(null, literal, protoConnection.getStandardConformingStrings()).toString();
+    }
+
+    public void setAutoCloseUnclosedStatements(boolean flag) {
+        autoCloseUnclosedStatements = flag;
+    }
+
+    public boolean isAutoCloseUnclosedStatements() {
+        return autoCloseUnclosedStatements;
     }
 }

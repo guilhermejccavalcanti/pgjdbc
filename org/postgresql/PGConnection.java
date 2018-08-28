@@ -17,8 +17,8 @@ import org.postgresql.largeobject.LargeObjectManager;
  *  java.sql.Connection. All Connections returned by the PostgreSQL driver
  *  implement PGConnection.
  */
-public interface PGConnection
-{
+public interface PGConnection {
+
     /**
      * This method returns any notifications that have been received
      * since the last call to this method.
@@ -88,8 +88,7 @@ public interface PGConnection
      *
      * @see org.postgresql.util.PGobject
      */
-    public void addDataType(String type, Class klass)
-    throws SQLException;
+    public void addDataType(String type, Class klass) throws SQLException;
 
     /**
      * Set the default statement reuse threshold before enabling server-side
@@ -120,7 +119,6 @@ public interface PGConnection
      *
      */
     public void setDefaultFetchSize(int fetchSize) throws SQLException;
-
 
     /**
      * Get the default fetch size for statements created from this connection
@@ -155,4 +153,19 @@ public interface PGConnection
      * @return the quoted literal
      */
     public String escapeLiteral(String literal) throws SQLException;
+
+    /**
+     * @see PGProperty#AUTO_CLOSE_UNCLOSED_STATEMENTS
+     * @return true if new Statement instance should be wrap to finalizer and close own resources on GC phase
+     */
+    boolean isAutoCloseUnclosedStatements();
+
+    /**
+     * Define necessary create finalizer wrapper for Statement instance for close resources
+     * on GC phase
+     * @param flag true if statement
+     *
+     * @see PGProperty#AUTO_CLOSE_UNCLOSED_STATEMENTS
+     */
+    void setAutoCloseUnclosedStatements(boolean flag);
 }
